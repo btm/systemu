@@ -64,7 +64,7 @@ class SystemUniversal
     @ruby = getopt[ 'ruby', self.class.ruby ]
     
     @strategy = getopt['strategy',:marshal]
-    if RUBY_PLATFORM =~/win32/
+    if RUBY_PLATFORM =~/w(in)*32/ || RUBY_PLATFORM=='windows'
       @strategy = getopt['strategy',:inspect]
     end
   end
