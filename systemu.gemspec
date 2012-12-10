@@ -24,6 +24,7 @@ Gem::Specification::new do |spec|
  "samples/f.rb",
  "systemu.gemspec",
  "test",
+ "test/strategy_test.rb",
  "test/systemu_test.rb",
  "test/testing.rb"]
 

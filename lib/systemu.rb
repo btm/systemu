@@ -62,6 +62,11 @@ class SystemUniversal
     @ppid = getopt[ 'ppid', self.class.ppid ]
     @pid = getopt[ 'pid', self.class.pid ]
     @ruby = getopt[ 'ruby', self.class.ruby ]
+    
+    @strategy = getopt['strategy',:marshal]
+    if RUBY_PLATFORM =~/w(in)*32/ || RUBY_PLATFORM=='windows'
+      @strategy = getopt['strategy',:inspect]
+    end
   end
 
   def systemu
@@ -138,27 +143,26 @@ class SystemUniversal
     stderr = File.expand_path(File.join(tmp, 'stderr'))
     program = File.expand_path(File.join(tmp, 'program'))
     config = File.expand_path(File.join(tmp, 'config'))
-
-    if @stdin
-      open(stdin, 'wb'){|f| relay @stdin => f}
-    else
-      FileUtils.touch stdin
-    end
-    FileUtils.touch stdout
-    FileUtils.touch stderr
-
+    
     c = {}
     c['argv'] = @argv
     c['env'] = @env
     c['cwd'] = @cwd
-    c['stdin'] = stdin
-    c['stdout'] = stdout
-    c['stderr'] = stderr
+    c['stdin'] = stdin 
+    c['stdout'] = stdout 
+    c['stderr'] = stderr 
     c['program'] = program
-    open(config, 'wb'){|f| Marshal.dump(c, f)}
-
-    open(program, 'wb'){|f| f.write child_program(config)}
-
+    
+    if @stdin
+      open(stdin, 'w'){|f| relay @stdin => f}
+    else
+      FileUtils.touch stdin
+    end
+    FileUtils.touch stdout
+    FileUtils.touch stderr 
+    
+    snippet=choose_serialization(tmp,c,@strategy)
+    open(program, 'w'){|f| f.write child_program(snippet)}
     c
   end
 
@@ -170,20 +174,12 @@ class SystemUniversal
     $VERBOSE = v
   end
 
-  def child_program config
+  def child_program strategy_snippet
     <<-program
-      # encoding: utf-8
-
+      # encoding: UTF-8
       PIPE = STDOUT.dup
       begin
-        config = Marshal.load(IO.read('#{ config }'))
-
-        argv = config['argv']
-        env = config['env']
-        cwd = config['cwd']
-        stdin = config['stdin']
-        stdout = config['stdout']
-        stderr = config['stderr']
+        #{strategy_snippet}
 
         Dir.chdir cwd if cwd
         env.each{|k,v| ENV[k.to_s] = v.to_s} if env
@@ -202,6 +198,68 @@ class SystemUniversal
         exit 42
       end
     program
+  end
+  
+  def choose_serialization tmp,config,strategy
+    case strategy
+    when :marshal
+      cfg = File.expand_path(File.join(tmp, 'config'))
+      open(cfg, 'w'){|f| Marshal.dump config, f}
+      snippet=serialization_snippet(cfg,strategy)
+    when :yaml
+      begin
+        require 'psych'
+      rescue LoadError
+      end
+      require 'yaml'
+      cfg = File.expand_path(File.join(tmp, 'config'))
+      open(cfg, 'w'){|f| YAML.dump config, f}
+      snippet=serialization_snippet(cfg,strategy)
+    else
+      snippet=serialization_snippet(config,strategy)
+    end
+    return snippet
+  end
+  def serialization_snippet config,strategy
+    case strategy
+    when :marshal
+      snippet=<<-EOT
+      config = Marshal.load(IO.read('#{ config }'))
+      
+      argv = config['argv']
+      env = config['env']
+      cwd = config['cwd']
+      stdin = config['stdin']
+      stdout = config['stdout']
+      stderr = config['stderr']
+      EOT
+    when :yaml
+      snippet=<<-EOT
+      begin
+        require 'psych'
+      rescue LoadError
+      end
+      require 'yaml'
+      config = YAML.load(IO.read('#{ config }'))
+      
+      argv = config['argv']
+      env = config['env']
+      cwd = config['cwd']
+      stdin = config['stdin']
+      stdout = config['stdout']
+      stderr = config['stderr']
+      EOT
+    else
+      snippet=<<-EOT
+      argv = #{config['argv'].inspect}
+      env = #{config['env'].inspect}
+      cwd = #{config['cwd'].inspect}
+      stdin = #{config['stdin'].inspect}
+      stdout = #{config['stdout'].inspect}
+      stderr = #{config['stderr'].inspect}
+      EOT
+    end
+    return snippet
   end
 
   def relay srcdst
@@ -356,5 +414,12 @@ if $0 == __FILE__
 #
   env = %q( ruby -e"  p Dir.pwd  " )
   status, stdout, stderr = systemu env, :cwd => Dir.tmpdir
+  p [status, stdout, stderr]
+  
+# YAMl strategy
+  status, stdout, stderr = systemu date, :strategy=>:yaml
+  p [status, stdout, stderr]
+# Marshal strategy
+  status, stdout, stderr = systemu date, :strategy=>:marshal
   p [status, stdout, stderr]
 end
